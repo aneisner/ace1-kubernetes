@@ -1,0 +1,10 @@
+service:
+  annotations:
+    metallb.io/loadBalancerIPs: 192.168.88.240
+ports:
+  web:
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https

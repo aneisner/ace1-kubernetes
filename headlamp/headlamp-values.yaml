@@ -1,0 +1,22 @@
+# Helm-Values für Headlamp (Web-GUI), erreichbar unter https://dashboard.lan
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: homelab-ca
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  hosts:
+    - host: dashboard.lan
+      paths:
+        - path: /
+          type: Prefix
+  tls:
+    - secretName: headlamp-tls
+      hosts:
+        - dashboard.lan
+service:
+  type: ClusterIP
+config:
+  sessionTTL: 3600
+clusterRoleBinding:
+  create: false

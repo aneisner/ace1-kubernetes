@@ -1,0 +1,133 @@
+# 40-paperless.yaml: Paperless-ngx (Speicher, Programm, Service)
+# Drei Objekte, getrennt durch "---":
+#   1. PersistentVolumeClaim  (Speicher für interne Daten)
+#   2. Deployment             (das Programm selbst)
+#   3. Service                (feste Adresse im Cluster)
+#
+# Namen, die zusammenpassen müssen:
+#   Service.selector            = Deployment.template.labels   (app: paperless)
+#   volumeMounts.name           = volumes.name                 (data, media, consume)
+#   volumes.claimName           = Name eines PVC               (paperless-data, ...)
+#   secretKeyRef.name           = Name eines Secrets im Cluster (nicht im Git)
+#
+# 1. Speicher -------------------------------------------------------------
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: paperless-data
+  namespace: paperless
+spec:
+  accessModes: ["ReadWriteOnce"]    # nur ein Knoten gleichzeitig
+  storageClassName: local-path      # Platte von ace1 (nur Zeitplan, Suchindex, Logs)
+  resources:
+    requests:
+      storage: 5Gi
+---
+# 2. Programm -------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paperless
+  namespace: paperless
+spec:
+  replicas: 1                       # ein Pod gewünscht
+  strategy:
+    type: Recreate                  # erst alten Pod stoppen, dann neuen starten (kurze Pause beim Update)
+  selector:
+    matchLabels:
+      app: paperless                # "diese Pods gehören mir" ...
+  template:                         # Vorlage für jeden Pod
+    metadata:
+      labels:
+        app: paperless              # ... muss zum Selector passen (und zum Service)
+    spec:
+      enableServiceLinks: false     # keine automatischen Variablen wie PAPERLESS_PORT (kollidieren sonst)
+      containers:
+        - name: paperless
+          image: ghcr.io/paperless-ngx/paperless-ngx:3.3.4   # feste Version, kein "latest"
+          ports:
+            - containerPort: 8000
+          env:
+            # Klartext-Werte
+            - name: PAPERLESS_REDIS
+              value: redis://redis:6379          # Service "redis" im selben Namespace
+            - name: PAPERLESS_DBHOST
+              value: postgres                    # Service "postgres"
+            - name: PAPERLESS_DBNAME
+              value: paperless
+            - name: PAPERLESS_DBUSER
+              value: paperless
+            # Geheime Werte: nur Name und Schlüssel stehen hier, der Wert liegt im Secret
+            - name: PAPERLESS_DBPASS
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: PAPERLESS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-secret
+                  key: PAPERLESS_SECRET_KEY
+            - name: PAPERLESS_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-secret
+                  key: PAPERLESS_ADMIN_USER
+            - name: PAPERLESS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-secret
+                  key: PAPERLESS_ADMIN_PASSWORD
+            # Einstellungen
+            - name: PAPERLESS_URL
+              value: https://paperless.lan
+            - name: PAPERLESS_OCR_LANGUAGE
+              value: deu+eng
+            - name: PAPERLESS_OCR_LANGUAGES
+              value: eng
+            - name: PAPERLESS_TIME_ZONE
+              value: Europe/Berlin
+            - name: PAPERLESS_CONSUMER_POLLING_INTERVAL
+              value: "60"                        # NFS meldet Änderungen nicht, daher alle 60 s prüfen
+          volumeMounts:             # Ordner im Container <- Speicher aus "volumes" unten
+            - name: data
+              mountPath: /usr/src/paperless/data
+            - name: media
+              mountPath: /usr/src/paperless/media
+            - name: consume
+              mountPath: /usr/src/paperless/consume
+          readinessProbe:           # erst wenn die Seite antwortet, bekommt der Pod Verkehr (Endpoints)
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:               # Reservierung für die Planung
+              cpu: 250m             # ein Viertel Prozessorkern
+              memory: 1Gi
+            limits:                 # Obergrenze: darüber wird der Container beendet
+              memory: 3Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: paperless-data      # PVC aus Abschnitt 1 (local-path)
+        - name: media
+          persistentVolumeClaim:
+            claimName: paperless-media     # NFS auf dem NAS (Dokumente)
+        - name: consume
+          persistentVolumeClaim:
+            claimName: paperless-consume   # NFS auf dem NAS (Eingang vom Scanner)
+---
+# 3. Zugang ----------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: paperless
+  namespace: paperless
+spec:
+  selector:
+    app: paperless                  # leitet an alle bereiten Pods mit diesem Label
+  ports:
+    - port: 8000                    # Port des Services
+      targetPort: 8000              # Port im Pod

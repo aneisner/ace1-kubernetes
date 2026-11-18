@@ -1,0 +1,17 @@
+# Geheimnisse und Zugangsdaten: gehören nie in ein Repository
+secrets/
+*secret*.yaml
+*secrets*.yaml
+*.key
+*.pem
+*.p12
+kubeconfig*
+*.kubeconfig
+restore.conf
+# Datenbank-Dumps enthalten echte Dokumentdaten
+*.dump
+*.sql
+*.tgz
+# Übungsordner und Notizen
+lernen/
+.DS_Store
